@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reproductor de Streams (MPD/M3U8/M3U/EPG) - Demo</title>
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background: #f8f9fa; }
+    .channel-thumb { width:100%; height:120px; object-fit:cover; border-radius:6px; }
+    .card-channel { cursor:pointer; transition:transform .12s ease; }
+    .card-channel:hover { transform:translateY(-4px); }
+    .player-container { background:#000; border-radius:8px; padding:8px; }
+    video { width:100%; height:auto; background:#000; max-height:60vh; }
+    .epg-list { max-height:220px; overflow:auto; }
+  </style>
+</head>
+<body>
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h3>Reproductor de Streams</h3>
+    <div>
+      <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">Añadir canal</button>
+      <button class="btn btn-outline-secondary" id="importM3UBtn">Importar M3U (URL/Archivo)</button>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-5">
+      <div class="player-container mb-3">
+        <div id="playerTitle" class="text-white mb-2">Selecciona un canal</div>
+        <video id="player" controls playsinline crossorigin></video>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">EPG / Programación</h5>
+          <div class="mb-2">
+            <small class="text-muted">(Si el canal tiene URL EPG en formato XMLTV, pega su ID de canal para buscar programa.)</small>
+          </div>
+          <div id="epgInfo" class="epg-list"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="col-12 col-lg-7">
+      <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 g-3" id="channelsGrid">
+        <!-- Canales cargados aparecerán aquí -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Añadir canal -->
+<div class="modal fade" id="addModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Añadir / Editar canal</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="channelForm">
+          <input type="hidden" id="channelIndex">
+          <div class="mb-3">
+            <label class="form-label">Título</label>
+            <input class="form-control" id="title" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">URL del stream (MPD/M3U8/M3U)</label>
+            <input class="form-control" id="url" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Tipo</label>
+            <select class="form-select" id="type">
+              <option value="auto">Auto (detecta por extensión)</option>
+              <option value="m3u8">m3u8 (HLS)</option>
+              <option value="mpd">mpd (MPEG-DASH)</option>
+              <option value="m3u">m3u (lista)</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Miniatura (URL)</label>
+            <input class="form-control" id="thumb">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">URL EPG (XMLTV) opcional</label>
+            <input class="form-control" id="epgUrl">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">EPG channel id (para mapear la programación)</label>
+            <input class="form-control" id="epgChannelId">
+          </div>
+          <div class="form-text">Nota: para reproducción HLS o DASH tu servidor debe permitir CORS y servir por HTTPS en la mayoría de navegadores.</div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary" id="saveChannelBtn">Guardar canal</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Importar M3U -->
+<div class="modal fade" id="importModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">Importar M3U</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">URL de M3U</label>
+          <input class="form-control" id="m3uUrl">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">O sube un archivo .m3u</label>
+          <input type="file" id="m3uFile" accept=".m3u,.txt" class="form-control">
+        </div>
+        <div class="form-text">El importador intentará parsear #EXTINF y atributos como "tvg-logo" y agregar canales.</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-primary" id="doImportBtn">Importar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<!-- hls.js para m3u8 -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.0/dist/hls.min.js"></script>
+<!-- dash.js para MPD -->
+<script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+
+<script>
+// Simple storage using localStorage (puedes reemplazar con IndexedDB o backend)
+const STORAGE_KEY = 'streams_channels_v1';
+function loadChannels(){
+  const raw = localStorage.getItem(STORAGE_KEY);
+  return raw ? JSON.parse(raw) : [];
+}
+function saveChannels(channels){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(channels));
+}
+
+let channels = loadChannels();
+let currentPlayer = null; // for dash
+let hlsInstance = null;
+
+function renderChannels(){
+  const grid = document.getElementById('channelsGrid');
+  grid.innerHTML = '';
+  channels.forEach((c, i) => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.innerHTML = `
+      <div class="card card-channel shadow-sm" data-idx="${i}">
+        <img src="${c.thumb || 'https://via.placeholder.com/400x225?text=No+Image'}" class="card-img-top channel-thumb" alt="${escapeHtml(c.title)}">
+        <div class="card-body">
+          <h6 class="card-title mb-1">${escapeHtml(c.title)}</h6>
+          <p class="card-text small text-muted mb-2">${escapeHtml(c.type || guessType(c.url))}</p>
+          <div class="d-flex justify-content-between">
+            <button class="btn btn-sm btn-outline-primary play-btn">Reproducir</button>
+            <div>
+              <button class="btn btn-sm btn-outline-secondary edit-btn">Editar</button>
+              <button class="btn btn-sm btn-outline-danger del-btn">Borrar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    grid.appendChild(col);
+  });
+  attachChannelListeners();
+}
+
+function attachChannelListeners(){
+  document.querySelectorAll('.card-channel').forEach(card => {
+    const idx = Number(card.dataset.idx);
+    card.querySelector('.play-btn').onclick = () => playChannel(idx);
+    card.querySelector('.edit-btn').onclick = () => openEditModal(idx);
+    card.querySelector('.del-btn').onclick = () => { if(confirm('Borrar canal?')){ channels.splice(idx,1); saveChannels(channels); renderChannels(); }};
+  });
+}
+
+function openEditModal(idx){
+  const modal = new bootstrap.Modal(document.getElementById('addModal'));
+  const c = channels[idx];
+  document.getElementById('channelIndex').value = idx;
+  document.getElementById('title').value = c.title || '';
+  document.getElementById('url').value = c.url || '';
+  document.getElementById('type').value = c.type || 'auto';
+  document.getElementById('thumb').value = c.thumb || '';
+  document.getElementById('epgUrl').value = c.epgUrl || '';
+  document.getElementById('epgChannelId').value = c.epgChannelId || '';
+  modal.show();
+}
+
+function playChannel(idx){
+  const c = channels[idx];
+  const player = document.getElementById('player');
+  const titleEl = document.getElementById('playerTitle');
+  titleEl.textContent = c.title;
+  stopPlayback();
+  const t = c.type && c.type!=='auto' ? c.type : guessType(c.url);
+  if(t === 'm3u8'){
+    if(Hls.isSupported()){
+      hlsInstance = new Hls();
+      hlsInstance.loadSource(c.url);
+      hlsInstance.attachMedia(player);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, ()=>{ player.play().catch(()=>{}); });
+    } else if(player.canPlayType('application/vnd.apple.mpegurl')){
+      player.src = c.url;
+      player.play().catch(()=>{});
+    } else {
+      alert('HLS no soportado en este navegador.');
+    }
+  } else if(t === 'mpd'){
+    currentPlayer = dashjs.MediaPlayer().create();
+    currentPlayer.initialize(player, c.url, true);
+  } else if(t === 'm3u'){
+    // If M3U is a playlist file, try to fetch and parse then play its first entry
+    fetch(c.url).then(r=>r.text()).then(text=>{
+      const parsed = parseM3U(text);
+      if(parsed.length>0){
+        // overwrite to play first found stream
+        playAdhocStream(parsed[0].url, parsed[0].title);
+      } else alert('No se encontraron streams en el M3U.');
+    }).catch(e=>alert('Error cargando M3U: '+e.message));
+  } else {
+    // fallback - try as generic video
+    player.src = c.url;
+    player.play().catch(()=>{});
+  }
+
+  // load EPG if available
+  if(c.epgUrl && c.epgChannelId){
+    loadEPG(c.epgUrl, c.epgChannelId);
+  } else {
+    document.getElementById('epgInfo').innerHTML = '<div class="text-muted">No hay EPG configurada para este canal.</div>';
+  }
+}
+
+function playAdhocStream(url, title){
+  // helper to play a stream URL unknown type
+  const player = document.getElementById('player');
+  stopPlayback();
+  const t = guessType(url);
+  if(t==='m3u8'){
+    if(Hls.isSupported()){ hlsInstance = new Hls(); hlsInstance.loadSource(url); hlsInstance.attachMedia(player); }
+    else { player.src = url; }
+  } else if(t==='mpd'){
+    currentPlayer = dashjs.MediaPlayer().create(); currentPlayer.initialize(player, url, true);
+  } else { player.src = url; }
+  player.play().catch(()=>{});
+}
+
+function stopPlayback(){
+  const player = document.getElementById('player');
+  try{ if(hlsInstance){ hlsInstance.destroy(); hlsInstance = null; } }catch(e){}
+  try{ if(currentPlayer){ currentPlayer.reset(); currentPlayer = null; } }catch(e){}
+  player.pause();
+  player.removeAttribute('src');
+  player.load();
+}
+
+function guessType(url){
+  if(!url) return 'unknown';
+  const u = url.split('?')[0].toLowerCase();
+  if(u.endsWith('.m3u8')) return 'm3u8';
+  if(u.endsWith('.mpd')) return 'mpd';
+  if(u.endsWith('.m3u') || u.endsWith('.m3u8.txt')) return 'm3u';
+  return 'auto';
+}
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+// Save channel form
+document.getElementById('saveChannelBtn').onclick = ()=>{
+  const idx = document.getElementById('channelIndex').value;
+  const c = {
+    title: document.getElementById('title').value.trim(),
+    url: document.getElementById('url').value.trim(),
+    type: document.getElementById('type').value,
+    thumb: document.getElementById('thumb').value.trim(),
+    epgUrl: document.getElementById('epgUrl').value.trim(),
+    epgChannelId: document.getElementById('epgChannelId').value.trim(),
+  };
+  if(idx === ''){ channels.push(c); } else { channels[Number(idx)] = c; }
+  saveChannels(channels);
+  renderChannels();
+  bootstrap.Modal.getInstance(document.getElementById('addModal')).hide();
+};
+
+// Import M3U modal handlers
+const importModalEl = document.getElementById('importModal');
+document.getElementById('importM3UBtn').addEventListener('click', ()=>{
+  const modal = new bootstrap.Modal(importModalEl); modal.show();
+});
+
+document.getElementById('doImportBtn').onclick = ()=>{
+  const url = document.getElementById('m3uUrl').value.trim();
+  const fileIn = document.getElementById('m3uFile');
+  if(url){ fetch(url).then(r=>r.text()).then(text=>{ const parsed = parseM3U(text); addParsed(parsed); }).catch(e=>alert('Error al cargar M3U: '+e.message)); }
+  else if(fileIn.files.length>0){
+    const f = fileIn.files[0];
+    const reader = new FileReader();
+    reader.onload = e=>{ const parsed = parseM3U(String(e.target.result)); addParsed(parsed); };
+    reader.readAsText(f);
+  } else alert('Proporciona una URL o un archivo .m3u');
+};
+
+function addParsed(parsed){
+  // parsed = [{title,url,thumb,props}] - add to channels
+  if(parsed.length===0){ alert('No se encontraron canales en el M3U.'); return; }
+  parsed.forEach(p=>{
+    channels.push({ title: p.title||'Sin título', url: p.url, type: 'auto', thumb: p.thumb||'', epgUrl:'', epgChannelId:'' });
+  });
+  saveChannels(channels);
+  renderChannels();
+  bootstrap.Modal.getInstance(importModalEl).hide();
+}
+
+function parseM3U(text){
+  const lines = text.split(/\r?\n/).map(l=>l.trim());
+  const items = [];
+  let cur = {};
+  for(let i=0;i<lines.length;i++){
+    const l = lines[i];
+    if(!l) continue;
+    if(l.startsWith('#EXTINF')){
+      // #EXTINF:-1 tvg-id="id" tvg-name="Name" tvg-logo="logo" group-title="...",Channel Title
+      const meta = l.substring(8).trim();
+      const parts = meta.split(',');
+      const lastComma = meta.lastIndexOf(',');
+      const title = meta.substring(lastComma+1).trim();
+      const props = {};
+      // find key="value" attributes
+      const attrText = meta.substring(0, lastComma);
+      const attrRegex = /(\S+?)="(.*?)"/g;
+      let m;
+      while((m=attrRegex.exec(attrText))){ props[m[1]] = m[2]; }
+      cur = { title: title, props };
+    } else if(!l.startsWith('#')){
+      // stream URL
+      cur.url = l;
+      if(cur.props && cur.props['tvg-logo']) cur.thumb = cur.props['tvg-logo'];
+      items.push(cur);
+      cur = {};
+    }
+  }
+  return items;
+}
+
+// EPG loader (XMLTV simple parser)
+async function loadEPG(epgUrl, channelId){
+  try{
+    const res = await fetch(epgUrl);
+    const txt = await res.text();
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(txt, 'application/xml');
+    const progEls = Array.from(xml.querySelectorAll('programme')).filter(p=>{
+      const ch = p.getAttribute('channel') || '';
+      return ch === channelId;
+    }).slice(0,50);
+    if(progEls.length===0){ document.getElementById('epgInfo').innerHTML = '<div class="text-muted">No se encontraron programas para este canal en el EPG.</div>'; return; }
+    const html = progEls.map(p=>{
+      const start = p.getAttribute('start');
+      const stop = p.getAttribute('stop');
+      const title = p.querySelector('title') ? p.querySelector('title').textContent : '—';
+      const desc = p.querySelector('desc') ? p.querySelector('desc').textContent : '';
+      return `<div class="mb-2"><strong>${formatEPGTime(start)}</strong> — <div>${escapeHtml(title)}</div><div class="small text-muted">${escapeHtml(desc)}</div></div>`;
+    }).join('');
+    document.getElementById('epgInfo').innerHTML = html;
+  }catch(e){ document.getElementById('epgInfo').innerHTML = '<div class="text-danger">Error cargando EPG: '+escapeHtml(e.message)+'</div>'; }
+}
+
+function formatEPGTime(s){
+  // XMLTV times often like 20251001T120000 +0000 or 20251001T120000Z
+  if(!s) return '';
+  // take first 14 chars YYYYMMDDHHMMSS
+  const m = s.match(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/);
+  if(!m) return s;
+  const d = new Date(Date.UTC(m[1],m[2]-1,m[3],m[4],m[5],m[6]));
+  return d.toLocaleString();
+}
+
+// Init
+renderChannels();
+
+// Helper: quick demo channels (only if empty)
+if(channels.length===0){
+  channels.push({ title:'Ejemplo HLS (m3u8)', url:'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8', type:'m3u8', thumb:'https://via.placeholder.com/400x225?text=HLS', epgUrl:'', epgChannelId:'' });
+  channels.push({ title:'Ejemplo DASH (mpd)', url:'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd', type:'mpd', thumb:'https://via.placeholder.com/400x225?text=DASH', epgUrl:'', epgChannelId:'' });
+  saveChannels(channels); renderChannels();
+}
+
+</script>
+</body>
+</html>
